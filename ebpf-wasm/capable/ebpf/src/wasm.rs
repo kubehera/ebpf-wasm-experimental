@@ -1,14 +1,14 @@
 use wasmtime::*;
 use wasmtime_wasi::WasiCtx;
 use wasmtime_wasi::sync::WasiCtxBuilder;
-use std::error::Error;
 use std::marker;
 
 pub struct WasmInstance<T>{
     pub store: Store<WasiCtx>,
     memory: Memory,
     init_write: TypedFunc<i32,i32>,
-    get_string: TypedFunc<(),(i32,i32)>,
+    get_string: TypedFunc<(),i32>,
+    get_string_len: TypedFunc<(),i32>,
     run_handler: TypedFunc<i32,()>,
     _marker: marker::PhantomData<fn() -> T>,
 }
@@ -32,13 +32,15 @@ impl<T> WasmInstance<T> {
         let memory = instance.get_memory(&mut store,"memory")
         .ok_or(anyhow::format_err!("failed to find `memory` export")).unwrap();
         let init_write = instance.get_typed_func::<i32, i32>(&mut store, "init_write").unwrap();
-        let get_string = instance.get_typed_func::<(), (i32,i32)>(&mut store, "get_string").unwrap();
+        let get_string = instance.get_typed_func::<(), i32>(&mut store, "get_string").unwrap();
+        let get_string_len = instance.get_typed_func::<(), i32>(&mut store, "get_string_len").unwrap();
         let run_handler = instance.get_typed_func::<i32, ()>(&mut store, "run_handler").unwrap();
         WasmInstance {
             store,
             memory,
             init_write,
             get_string,
+            get_string_len,
             run_handler,
             _marker: marker::PhantomData,
         }
@@ -50,7 +52,8 @@ impl<T> WasmInstance<T> {
     }
 
     pub fn read_from_wasm(&mut self)->String{
-        let (len ,read_addr)= self.get_string.call(&mut self.store,()).unwrap();
+        let read_addr= self.get_string.call(&mut self.store,()).unwrap();
+        let len= self.get_string_len.call(&mut self.store,()).unwrap();
         let mut read_buffer = vec![0u8; len.try_into().unwrap()];
         self.memory.read(&self.store, read_addr.try_into().unwrap(), &mut read_buffer).unwrap();
         format!("{}",std::str::from_utf8(&read_buffer[..]).unwrap())

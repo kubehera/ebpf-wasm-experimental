@@ -5,11 +5,14 @@
 // Based on capable(8) by Brendan Gregg
 use core::time::Duration;
 //use std::str::FromStr;
+use std::sync::Mutex;
 
 use anyhow::{bail, Result};
 use clap::Parser;
 use libbpf_rs::PerfBufferBuilder;
 //use plain::Plain;
+use std::fs;
+use scopeguard::defer;
 use std::path::Path;
 
 use crate::wasm::WasmInstance;
@@ -90,20 +93,6 @@ fn print_banner(extra_fields: bool) {
     }
 }
 
-
-fn _handle_event(opts: Command, data: &[u8]) {
-    let mut wasm_instance:WasmInstance<()> = WasmInstance::new();
-
-    let mut extra_fields = 0;
-    if opts.extra_fields{
-        extra_fields = 1;
-    }
-
-    wasm_instance.write_data_to_wasm(data);
-    wasm_instance.run(extra_fields);
-    println!("{}",wasm_instance.read_from_wasm());
-}
-
 fn handle_lost_events(cpu: i32, count: u64) {
     eprintln!("Lost {count} events on CPU {cpu}");
 }
@@ -133,11 +122,28 @@ fn main() -> Result<()> {
     .prog_mut("kprobe__cap_capable")
     .expect("failed to find program");
     println!("start attch prog in section:{}",prog.section());
-    prog.attach()?;
+    let mut link = prog.attach().expect("failed to attach prog");
+    let path = "/sys/fs/bpf/kprobe__cap_capable-link";
+    link.pin(path).expect("failed to pin prog");
+    // Backup cleanup method in case test errors
+    defer! {
+        let _ = fs::remove_file(path);
+    }
 
     print_banner(opts.extra_fields);
+
+
+    let mut wasm_instance:WasmInstance<()> = WasmInstance::new();
+    let handle_lock = Mutex::new(true);
     let handle_event = move |_cpu: i32, data: &[u8]| {
-        _handle_event(opts, data);
+        let _ = handle_lock.lock();
+        let mut extra_fields = 0;
+        if opts.extra_fields{
+            extra_fields = 1;
+        }
+        wasm_instance.write_data_to_wasm(data);
+        wasm_instance.run(extra_fields);
+        println!("{}",wasm_instance.read_from_wasm());
     };
     let map = skel.map_mut("events").expect("Failed to get perf-buffer map");
 

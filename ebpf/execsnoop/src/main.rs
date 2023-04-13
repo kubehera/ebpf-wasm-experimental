@@ -95,16 +95,11 @@ fn main() -> Result<()> {
 
     print_banner();
     let handle_event = move |_cpu: i32, data: &[u8]| {
-        //println!("{:#?}",data);
         let mut event:event = event::default();
         plain::copy_from_bytes(&mut event, data).expect("Data buffer was too short");
         _handle_event(event);
-        //_handle_event(opts, data);
     };
-    /*
-    for val in  skel.maps_iter() {
-        println!("{:#?}",val);
-    }*/
+
     let map = skel.map_mut("events").expect("Failed to get perf-buffer map");
 
    

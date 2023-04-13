@@ -24,11 +24,16 @@ pub unsafe extern fn init_write(len: usize) -> *const u8 {
 }
 
 #[no_mangle]
-pub extern fn get_string() -> (usize, *const u8){
+pub extern fn get_string() -> *const u8{
+    let read = READ_BUF.lock().unwrap();
+    return read.as_ptr()
+}
+#[no_mangle]
+pub extern fn get_string_len() -> usize{
     let read = READ_BUF.lock().unwrap();
     let binding = read.to_owned();
     let bytes = binding.as_bytes();
-    return (bytes.len(), read.as_ptr())
+    return bytes.len()
 }
 
 static CAPS: phf::Map<i32, &'static str> = phf_map! {
