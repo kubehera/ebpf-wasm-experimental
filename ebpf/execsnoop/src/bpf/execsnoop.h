@@ -1,3 +1,4 @@
+#include "vmlinux.h"
 #ifndef __HELLO_H
 #define __HELLO_H
 
@@ -15,6 +16,7 @@ struct event {
 	int retval;
 	int args_count;
 	unsigned int args_size;
+	//char args[TASK_COMM_LEN];
 	char args[FULL_MAX_ARGS_ARR];
 };
 
