@@ -1,7 +1,8 @@
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 
-use chrono::{Local};
+use std::time::SystemTime;
+use chrono::{DateTime, Local};
 
 use plain::Plain;
 use phf::phf_map;
@@ -96,7 +97,10 @@ pub unsafe extern "C" fn run_handler(extra_fields: bool){
 
 fn _handle_event(extra_fields: bool, event: capable_bss_types::event) -> String{
 
-    let now = Local::now().format("%H:%m:%S").to_string();
+    //let now = Local::now().format("%H:%m:%S").to_string();
+    let now = SystemTime::now();
+    let now: DateTime<Local> = now.into();
+    let now = now.format("%H:%M:%S").to_string();
 
     let comm_str = std::str::from_utf8(&event.comm)
         .unwrap()
@@ -107,7 +111,7 @@ fn _handle_event(extra_fields: bool, event: capable_bss_types::event) -> String{
     };
     if extra_fields {
         return format!(
-            "{:9} {:6} {:<6} {:<6} {:<16} {:<4} {:<20} {:<6} {}",
+            "{:#?} {:6} {:<6} {:<6} {:<16} {:<4} {:<20} {:<6} {}",
             now,
             event.uid,
             event.tgid,
@@ -120,7 +124,7 @@ fn _handle_event(extra_fields: bool, event: capable_bss_types::event) -> String{
         )
     }
     return format!(
-        "{:9} {:6} {:<6} {:<16} {:<4} {:<20} {:<6}",
+        "{:#?} {:6} {:<6} {:<16} {:<4} {:<20} {:<6}",
         now, event.uid, event.tgid, comm_str, event.cap, cap_name, event.audit
     )
 }
