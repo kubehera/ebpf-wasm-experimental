@@ -1,0 +1,22 @@
+[package]
+name = "nettrace"
+version = "0.1.0"
+authors = ["lic17"]
+license = "LGPL-2.1-only OR BSD-2-Clause"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.4"
+libbpf-rs = "0.20.0"
+libc = "0.2"
+plain = "0.2"
+clap = { version = "3.1", default-features = false, features = ["std", "derive"] }
+wasmtime = "7.0.0"
+wasmtime-wasi = "7.0.0"
+scopeguard = "1.1.0"
+
+[features]
+static = ["libbpf-rs/static"]
+
+[build-dependencies]
+bindgen = "0.59.1"
