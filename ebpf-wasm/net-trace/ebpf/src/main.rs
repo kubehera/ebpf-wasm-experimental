@@ -104,7 +104,6 @@ fn main() -> Result<()> {
         .sample_cb(handle_event)
         .lost_cb(handle_lost_events)
         .build().expect("Failed to build");
-    perf.consume().expect("Failed to consume ringbuf");
 
     println!("poll for perf events buffer");
     loop{
