@@ -52,7 +52,8 @@ fn handle_lost_events(cpu: i32, count: u64) {
     eprintln!("Lost {count} events on CPU {cpu}");
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
 
     bump_memlock_rlimit()?;
     let opts = Command::parse();
@@ -64,8 +65,6 @@ fn main() -> Result<()> {
         builder.debug(true);
     }
     let open_obj = builder.open_file(obj_path).expect("failed to open object");
-
-
 
     let mut obj = open_obj.load().expect("Failed to load object");
     let progs = obj.progs_iter_mut();
@@ -81,33 +80,82 @@ fn main() -> Result<()> {
         prognames.push(link);
     }
 
-    let map = obj.map("socket_opts_events_queue").expect("Failed to get perf-buffer map");
-    println!("get perf event map:{}",map.name());
+    // start trace public network
+    println!("start trace public network");
     let mut wasm_instance:WasmInstance<()> = WasmInstance::new();
     let handle_lock = Mutex::new(true);
     let handle_event = move |_cpu: i32, data: &[u8]| {
         let _ = handle_lock.lock();
-        let mut extra_fields = 0;
-        if opts.extra_fields{
-            extra_fields = 1;
-        }
+        let mut handle_type = 0;
         wasm_instance.write_data_to_wasm(data);
-        wasm_instance.run(extra_fields);
+        wasm_instance.run(handle_type);
         let res = wasm_instance.read_from_wasm();
         if !res.starts_with("内网访问地址") {
             println!("{}",res);
         }
     };
-
+    let map = obj.map("socket_opts_events_queue").expect("Failed to get perf-buffer map");
     println!("push perf event map:{}",map.name());
     let perf = PerfBufferBuilder::new(map)
         .sample_cb(handle_event)
         .lost_cb(handle_lost_events)
         .build().expect("Failed to build");
 
-    println!("poll for perf events buffer");
-    loop{
-        perf.poll(Duration::from_millis(100)).expect("Failed to poll ringbuf");
-    }
+    // start trace socket drop
+    println!("start trace socket drop");
+    let mut wasm_instance:WasmInstance<()> = WasmInstance::new();
+    let handle_lock = Mutex::new(true);
+    let handle_drop_event = move |_cpu: i32, data: &[u8]| {
+        let _ = handle_lock.lock();
+        let mut handle_type = 1;
+        wasm_instance.write_data_to_wasm(data);
+        wasm_instance.run(handle_type);
+        let res = wasm_instance.read_from_wasm();
+        if !res.starts_with("无效地址") {
+            println!("{}",res);
+        }
+    };
+    let drop_map = obj.map("socket_drop_queue").expect("Failed to get perf-buffer map");
+    println!("push perf event map:{}",drop_map.name());
+    let drop_perf = PerfBufferBuilder::new(drop_map)
+        .sample_cb(handle_drop_event)
+        .lost_cb(handle_lost_events)
+        .build().expect("Failed to build");
 
+    // start trace tcp retransmit
+    println!("start trace tcp retransmit");
+    let mut wasm_instance:WasmInstance<()> = WasmInstance::new();
+    let handle_lock = Mutex::new(true);
+    let handle_retransmit_event = move |_cpu: i32, data: &[u8]| {
+        let _ = handle_lock.lock();
+        let mut handle_type = 2;
+        wasm_instance.write_data_to_wasm(data);
+        wasm_instance.run(handle_type);
+        let res = wasm_instance.read_from_wasm();
+        println!("{}",res);
+    };
+    let retransmit_map = obj.map("tcp_retransmit_queue").expect("Failed to get perf-buffer map");
+    println!("push perf event map:{}",retransmit_map.name());
+    let retransmit_perf = PerfBufferBuilder::new(retransmit_map)
+        .sample_cb(handle_retransmit_event)
+        .lost_cb(handle_lost_events)
+        .build().expect("Failed to build");
+
+    tokio::spawn(async move{
+        println!("poll for public network perf events buffer");
+        loop{
+            perf.poll(Duration::from_millis(100)).expect("Failed to poll ringbuf");
+        }
+    });
+    tokio::spawn(async move{
+        println!("poll for socket drop perf events buffer");
+        loop{
+            drop_perf.poll(Duration::from_millis(100)).expect("Failed to poll ringbuf");
+        }
+    });
+    println!("poll for tcp retransmit perf events buffer");
+    loop{
+        retransmit_perf.poll(Duration::from_millis(100)).expect("Failed to poll ringbuf");
+    }
+    Ok(())
 }

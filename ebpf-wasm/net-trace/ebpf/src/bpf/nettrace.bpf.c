@@ -87,7 +87,7 @@ static __always_inline void submit_new_connection(struct pt_regs* ctx, __u32 fro
         return;
     }
 
-    // event send
+    // event send/
     struct sock_opts_event opts_event = {};
     opts_event.type = from_type;
     opts_event.pid = tgid;
@@ -130,9 +130,6 @@ int sys_connect(struct pt_regs *ctx) {
     connect_args.addr = (void *)PT_REGS_PARM2(ctx);
     connect_args.start_nacs = bpf_ktime_get_ns();
     bpf_map_update_elem(&conecting_args, &id, &connect_args, 0);
-
-    __u32 sock_family = _(connect_args.addr->sa_family);
-    __u32 fd1 = PT_REGS_PARM1(ctx);
 	return 0;
 }
 
@@ -148,18 +145,6 @@ int sys_connect_ret(struct pt_regs *ctx) {
 
     bpf_map_delete_elem(&conecting_args, &id);
 	return 0;
-}
-
-SEC("kprobe/tcp_connect")
-int tcp_connect(struct pt_regs *ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct connect_args_t *connect_args;
-
-    connect_args = bpf_map_lookup_elem(&conecting_args, &id);
-    if (connect_args) {
-        connect_args->sock = (void *)PT_REGS_PARM1(ctx);
-    }
-    return 0;
 }
 
 static __always_inline  void process_write_data(void *ctx, __u64 id, struct sock_data_args_t *args, ssize_t bytes_count,
@@ -264,43 +249,6 @@ int sys_sendto_ret(struct trace_event_raw_sys_exit *ctx) {
     return 0;
 }
 
-SEC("kprobe/__sys_close")
-int sys_close(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-
-    struct sock_close_args_t close_args = {};
-    close_args.fd = PT_REGS_PARM1(ctx);
-    bpf_map_update_elem(&closing_args, &id, &close_args, 0);
-    return 0;
-}
-
-static __inline void process_close_sock(struct pt_regs* ctx, __u64 id, struct sock_close_args_t *args) {
-    __u32 tgid = (__u32)(id >> 32);
-    int ret = PT_REGS_RC(ctx);
-    if (ret < 0) {
-        return;
-    }
-    if (args->fd < 0) {
-        return;
-    }
-
-    submit_close_connection(ctx, tgid, args->fd);
-}
-
-SEC("kretprobe/__sys_close")
-int sys_close_ret(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct sock_close_args_t *close_args;
-
-    close_args = bpf_map_lookup_elem(&closing_args, &id);
-    if (close_args) {
-        process_close_sock(ctx, id, close_args);
-    }
-
-    bpf_map_delete_elem(&writing_args, &id);
-    return 0;
-}
-
 SEC("kprobe/__sys_recvfrom")
 int sys_recvfrom(struct pt_regs* ctx) {
     __u64 id = bpf_get_current_pid_tgid();
@@ -329,35 +277,6 @@ int sys_recvfrom_ret(struct pt_regs* ctx) {
     return 0;
 }
 
-/*
-SEC("kprobe/__sys_read")
-int sys_read(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-
-    struct sock_data_args_t data_args = {};
-    data_args.func = SOCK_DATA_FUNC_READ;
-    data_args.fd = PT_REGS_PARM1(ctx);
-    data_args.buf = (void *)PT_REGS_PARM2(ctx);
-    data_args.start_nacs = bpf_ktime_get_ns();
-    bpf_map_update_elem(&writing_args, &id, &data_args, 0);
-    return 0;
-}
-
-SEC("kretprobe/__sys_read")
-int sys_read_ret(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct sock_data_args_t *data_args;
-    ssize_t bytes_count = PT_REGS_RC(ctx);
-
-    data_args = bpf_map_lookup_elem(&writing_args, &id);
-    if (data_args && data_args->sock_event) {
-        process_write_data(ctx, id, data_args, bytes_count, SOCK_DATA_DIRECTION_INGRESS, false);
-    }
-
-    bpf_map_delete_elem(&writing_args, &id);
-    return 0;
-}*/
-
 SEC("kprobe/tcp_rcv_established")
 int tcp_rcv_established(struct pt_regs* ctx) {
     __u64 id = bpf_get_current_pid_tgid();
@@ -378,72 +297,6 @@ int tcp_rcv_established(struct pt_regs* ctx) {
     return 0;
 }
 
-/*
-SEC("tracepoint/syscalls/sys_enter_writev")
-int sys_writev(struct trace_event_raw_sys_enter *ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-
-    struct sock_data_args_t data_args = {};
-    data_args.func = SOCK_DATA_FUNC_WRITEV;
-    data_args.fd = ctx->args[1];
-    data_args.iov = (void *)ctx->args[2];
-    data_args.iovlen = ctx->args[3];
-    data_args.start_nacs = bpf_ktime_get_ns();
-    bpf_map_update_elem(&writing_args, &id, &data_args, 0);
-//    struct sock_opts_event t = {};
-//    __u64 ret = bpf_perf_event_output(ctx, &test_queue, BPF_F_CURRENT_CPU, &t, sizeof(struct sock_opts_event));
-//    bpf_printk("writev send queue: %d\n", ret);
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_exit_writev")
-int sys_writev_ret(struct trace_event_raw_sys_exit *ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct sock_data_args_t *data_args;
-    ssize_t bytes_count = ctx->ret;
-
-    data_args = bpf_map_lookup_elem(&writing_args, &id);
-    if (data_args && data_args->sock_event) {
-        process_write_data(ctx, id, data_args, bytes_count, SOCK_DATA_DIRECTION_EGRESS, true);
-        bpf_printk("executing return writev11\n");
-    }
-
-    bpf_map_delete_elem(&writing_args, &id);
-    return 0;
-}
-SEC("kprobe/__sys_accpet")
-int sys_accept(struct pt_regs *ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct accept_args_t sock = {};
-    sock.addr = (void *)PT_REGS_PARM2(ctx);
-    sock.start_nacs = bpf_ktime_get_ns();
-    bpf_map_update_elem(&accepting_args, &id, &sock, 0);
-    return 0;
-}
-
-static __inline void process_accept(struct pt_regs* ctx, __u64 id, struct accept_args_t *accept_args) {
-    int fd = PT_REGS_RC(ctx);
-    if (fd < 0) {
-        return;
-    }
-    __u32 tgid = id >> 32;
-
-    submit_new_connection(ctx, SOCKET_OPTS_TYPE_ACCEPT, tgid, fd, accept_args->start_nacs, accept_args->addr, accept_args->socket);
-}
-
-
-SEC("kretprobe/__sys_accpet")
-int sys_accept_ret(struct pt_regs *ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct accept_args_t *accept_sock;
-    accept_sock = bpf_map_lookup_elem(&accepting_args, &id);
-    if (accept_sock) {
-        process_accept(ctx, id, accept_sock);
-    }
-    bpf_map_delete_elem(&accepting_args, &id);
-    return 0;
-}
-*/
 SEC("kretprobe/sock_alloc")
 int sock_alloc_ret(struct pt_regs *ctx) {
     __u64 id = bpf_get_current_pid_tgid();
@@ -484,124 +337,116 @@ int sys_write_ret(struct trace_event_raw_sys_exit *ctx) {
     return 0;
 }
 
-/*
-SEC("kprobe/__sys_send")
-int sys_send(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
+//TODO
 
-    struct sock_data_args_t data_args = {};
-    data_args.func = SOCK_DATA_FUNC_SEND;
-    data_args.fd = PT_REGS_PARM1(ctx);
-    data_args.buf = (void *)PT_REGS_PARM2(ctx);
-    data_args.start_nacs = bpf_ktime_get_ns();
-    bpf_map_update_elem(&writing_args, &id, &data_args, 0);
-    return 0;
+SEC("tracepoint/tcp/tcp_retransmit_skb")
+int tracepoint_tcp_retransmit_skb(struct trace_event_raw_tcp_event_sk_skb *ctx){
+
+    struct tcp_retransmit_event event = {};
+	__u64 pid_tgid = bpf_get_current_pid_tgid();
+	event.pid = pid_tgid >> 32;
+	bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    event.type = 0;
+	BPF_CORE_READ_INTO(&event.sport, ctx, sport);
+	BPF_CORE_READ_INTO(&event.dport, ctx, dport);
+	//BPF_CORE_READ_INTO(&event.family, ctx, family);
+	//struct sk_buff *skb = ctx->skbaddr;
+	const struct sock *sk = ctx->skaddr;
+	BPF_CORE_READ_INTO(&event.family, sk, __sk_common.skc_family);
+	BPF_CORE_READ_INTO(&event.state, sk, __sk_common.skc_state);
+	BPF_CORE_READ_INTO(&event.saddr_v4, ctx, saddr);
+	BPF_CORE_READ_INTO(&event.daddr_v4, ctx, daddr);
+	BPF_CORE_READ_INTO(&event.saddr_v6, ctx, saddr_v6);
+	BPF_CORE_READ_INTO(&event.daddr_v6, ctx, daddr_v6);
+	__u64 ret = bpf_perf_event_output(ctx, &tcp_retransmit_queue, BPF_F_CURRENT_CPU, &event, sizeof(event));
+    if (ret != 0) {
+        bpf_printk("write to tcp_retransmit queue failure:%d\n", ret);
+    }
+	return 0;
+
+
 }
 
-SEC("kretprobe/__sys_send")
-int sys_send_ret(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct sock_data_args_t *data_args;
-    ssize_t bytes_count = PT_REGS_RC(ctx);
+SEC("tracepoint/tcp/tcp_retransmit_synack")
+int tracepoint_tcp_retransmit_synack(struct trace_event_raw_tcp_retransmit_synack *ctx){
+    struct tcp_retransmit_event event = {};
+	__u64 pid_tgid = bpf_get_current_pid_tgid();
+	event.pid = pid_tgid >> 32;
+	bpf_get_current_comm(&event.comm, sizeof(event.comm));
+    event.type = 1;
+	BPF_CORE_READ_INTO(&event.sport, ctx, sport);
+	BPF_CORE_READ_INTO(&event.dport, ctx, dport);
+	//struct sk_buff *skb = ctx->skbaddr;
+	//event.socket_family = BPF_CORE_READ(sk, __sk_common.skc_family);
+	const struct sock *sk = ctx->skaddr;
+	BPF_CORE_READ_INTO(&event.family, sk, __sk_common.skc_family);
+	BPF_CORE_READ_INTO(&event.state, sk, __sk_common.skc_state);
+	BPF_CORE_READ_INTO(&event.saddr_v4, ctx, saddr);
+	BPF_CORE_READ_INTO(&event.daddr_v4, ctx, daddr);
+	BPF_CORE_READ_INTO(&event.saddr_v6, ctx, saddr_v6);
+	BPF_CORE_READ_INTO(&event.daddr_v6, ctx, daddr_v6);
+	__u64 ret = bpf_perf_event_output(ctx, &tcp_retransmit_queue, BPF_F_CURRENT_CPU, &event, sizeof(event));
+    if (ret != 0) {
+        bpf_printk("write to tcp_retransmit queue failure:%d\n", ret);
+    }
+	return 0;
+}
 
-    data_args = bpf_map_lookup_elem(&writing_args, &id);
-    if (data_args) {
-        process_write_data(ctx, id, data_args, bytes_count, SOCK_DATA_DIRECTION_EGRESS, false);
+static __always_inline void __trace_drop(void *ctx, struct sock *sk, struct sk_buff *skb, __u16 reason)
+{
+	__u64 pid_tgid = bpf_get_current_pid_tgid();
+	struct sock_drop_event event = {};
+	event.reason = reason;
+	bpf_get_current_comm(&event.comm, sizeof(event.comm));
+	event.pid = pid_tgid >> 32;
+    
+	if (sk != NULL){
+	    struct inet_sock *sockp = (struct inet_sock *)sk;
+	    event.socket_family = BPF_CORE_READ(sk, __sk_common.skc_family);
+
+	    BPF_CORE_READ_INTO(&event.ip_proto, sk, sk_protocol);
+	    BPF_CORE_READ_INTO(&event.dport, sk, __sk_common.skc_dport);
+	    BPF_CORE_READ_INTO(&event.sport, sockp, inet_sport);
+
+	    switch (event.socket_family) {
+	    case AF_INET:
+	    	BPF_CORE_READ_INTO(&event.daddr_v4, sk, __sk_common.skc_daddr);
+	    	BPF_CORE_READ_INTO(&event.saddr_v4, sk, __sk_common.skc_rcv_saddr);
+	    	break;
+
+	    case AF_INET6:
+	    	BPF_CORE_READ_INTO(&event.saddr_v6, sk, __sk_common.skc_v6_rcv_saddr.in6_u.u6_addr32);
+	    	BPF_CORE_READ_INTO(&event.daddr_v6, sk, __sk_common.skc_v6_daddr.in6_u.u6_addr32);
+	    	break;
+	    }
+
     }
 
-    bpf_map_delete_elem(&writing_args, &id);
-    return 0;
-}*/
+	__u64 ret = bpf_perf_event_output(ctx, &socket_drop_queue, BPF_F_CURRENT_CPU, &event, sizeof(event));
+    if (ret != 0) {
+        bpf_printk("write to socket_drop queue failure:%d\n", ret);
+    }
+}
 
-//
-//SEC("kprobe/__sys_writev")
-//int sys_writev(struct pt_regs* ctx) {
-//    __u64 id = bpf_get_current_pid_tgid();
-//
-//    struct sock_data_args_t data_args = {};
-//    data_args.func = SOCK_DATA_FUNC_WRITEV;
-//    data_args.fd = PT_REGS_PARM1(ctx);
-//    data_args.iov = (void *)PT_REGS_PARM2(ctx);
-//    data_args.iovlen = PT_REGS_PARM3(ctx);
-//    data_args.start_nacs = bpf_ktime_get_ns();
-//    bpf_map_update_elem(&writing_args, &id, &data_args, 0);
-////    struct sock_opts_event t = {};
-////    __u64 ret = bpf_perf_event_output(ctx, &test_queue, BPF_F_CURRENT_CPU, &t, sizeof(struct sock_opts_event));
-////    bpf_printk("writev send queue: %d\n", ret);
-//    return 0;
-//}
-//
-//SEC("kretprobe/__sys_writev")
-//int sys_writev_ret(struct pt_regs* ctx) {
-//    __u64 id = bpf_get_current_pid_tgid();
-//    struct sock_data_args_t *data_args;
-//    ssize_t bytes_count = PT_REGS_RC(ctx);
-//
-//    data_args = bpf_map_lookup_elem(&writing_args, &id);
-//    if (data_args && data_args->sock_event) {
-//        process_write_data(ctx, id, data_args, bytes_count, SOCK_DATA_DIRECTION_EGRESS, true);
-//        bpf_printk("executing return writev\n");
-//    }
-//
-//    bpf_map_delete_elem(&writing_args, &id);
-//    return 0;
-//}
+SEC("tracepoint/skb/kfree_skb")
+int tracepoint_skb_kfree_skb(struct trace_event_raw_kfree_skb *ctx)
+{
+	struct sk_buff *skb = ctx->skbaddr;
+	struct sock *sk = BPF_CORE_READ(skb, sk);
 
+   /* only query reason when it is available */
+    __u16 reason;
+    if (bpf_core_field_exists(ctx->reason))
+    {
+        reason = ctx->reason;
+    }
 
-SEC("kprobe/__sys_sendmsg")
-int sys_sendmsg(struct pt_regs* ctx) {
-    // TODO sendmsg temporary not used in service mesh mainly or test process(envoy, nginx), so ignored
-//    __u64 id = bpf_get_current_pid_tgid();
-    const struct user_msghdr* msghdr = (void *)PT_REGS_PARM2(ctx);
-    if (msghdr == NULL) {
+    /* skip if the socket is not dropped ("reason" requires kernel >= 5.19) */
+    if (bpf_core_field_exists(ctx->reason) && reason <= SKB_DROP_REASON_NOT_SPECIFIED)
+    {
         return 0;
     }
+    __trace_drop(ctx, sk, skb, reason);
 
-//    bpf_printk("executing sendmsg\n");
-    return 0;
-}
-
-SEC("kretprobe/__sys_sendmsg")
-int sys_sendmsg_ret(struct pt_regs* ctx) {
-//    bpf_printk("executing sendmsg ret\n");
-    return 0;
-}
-
-SEC("kprobe/__sys_sendmmsg")
-int sys_sendmmsg(struct pt_regs* ctx) {
-    // TODO sendmsg temporary not used in service mesh mainly or test process(envoy, nginx), so ignored
-//    __u64 id = bpf_get_current_pid_tgid();
-    const struct user_msghdr* msghdr = (void *)PT_REGS_PARM2(ctx);
-    if (msghdr == NULL) {
-        return 0;
-    }
-
-    bpf_printk("executing sendmmsg\n");
-    return 0;
-}
-
-SEC("kretprobe/__sys_sendmmsg")
-int sys_sendmmsg_ret(struct pt_regs* ctx) {
-    bpf_printk("executing sendmmsg ret\n");
-    return 0;
-}
-
-SEC("kprobe/security_socket_sendmsg")
-int security_socket_sendmsg(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct sock_data_args_t *data_args = bpf_map_lookup_elem(&writing_args, &id);
-    if (data_args != NULL) {
-        data_args->sock_event = true;
-    }
-    return 0;
-}
-
-SEC("kprobe/security_socket_recvmsg")
-int security_socket_recvmsg(struct pt_regs* ctx) {
-    __u64 id = bpf_get_current_pid_tgid();
-    struct sock_data_args_t *data_args = bpf_map_lookup_elem(&writing_args, &id);
-    if (data_args != NULL) {
-        data_args->sock_event = true;
-    }
-    return 0;
+	return 0;
 }

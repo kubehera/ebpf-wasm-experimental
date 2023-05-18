@@ -274,4 +274,51 @@ struct {
 	__type(value, struct accept_args_t);
 } accepting_args SEC(".maps");
 
+
+// ----------------------------------------------------------------
+// socker drop event
+// ----------------------------------------------------------------
+struct sock_drop_event {
+    __u32 pid;
+    __u32 socket_family;
+    __u16 ip_proto;
+    char comm[128];
+    __u16 sport;
+    __u16 dport;
+    __u32 saddr_v4;
+    __u32 daddr_v4;
+    __u8 saddr_v6[16];
+    __u8 daddr_v6[16];
+	enum skb_drop_reason reason;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u32));
+} socket_drop_queue SEC(".maps");
+
+// ----------------------------------------------------------------
+// tcp retransmit
+// ----------------------------------------------------------------
+struct tcp_retransmit_event {
+    __u32 type;
+    __u32 pid;
+    char comm[128];
+    __u16 family;
+    __u16 sport;
+    __u16 dport;
+    __u8 saddr_v4[4];
+    __u8 daddr_v4[4];
+    __u8 saddr_v6[16];
+    __u8 daddr_v6[16];
+    __u8 state;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+    __uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u32));
+} tcp_retransmit_queue SEC(".maps");
+
 #endif

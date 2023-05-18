@@ -13,7 +13,6 @@ pub struct WasmInstance<T>{
     _marker: marker::PhantomData<fn() -> T>,
 }
 
-
 impl<T> WasmInstance<T> {
     pub fn new() -> WasmInstance<T>{
         let engine = Engine::default();
